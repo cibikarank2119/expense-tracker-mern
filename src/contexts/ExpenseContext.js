@@ -153,7 +153,7 @@ export const ExpenseProvider = ({ children }) => {
 
   // ⚠️ NEW — fetch real data from MongoDB on app load
   useEffect(() => {
-    fetch("http://localhost:3000/api/expenses")
+    fetch("http://localhost:5000/api/expenses")
       .then((res) => res.json())
       .then((data) => {
         console.log("Fetched from backend:", data);
@@ -213,7 +213,7 @@ export const ExpenseProvider = ({ children }) => {
 
       console.log('ACTION - Formatted transaction:', newTransaction);
 
-      fetch("http://localhost:3000/api/expenses", {
+      fetch("http://localhost:5000/api/expenses", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -252,7 +252,7 @@ export const ExpenseProvider = ({ children }) => {
         return;
       }
 
-      fetch(`http://localhost:3000/api/expenses/${id}`, {
+      fetch(`http://localhost:5000/api/expenses/${id}`, {
         method: "DELETE",
       })
         .then((res) => res.json())
@@ -286,7 +286,7 @@ export const ExpenseProvider = ({ children }) => {
         amount: parseFloat(transaction.amount),
       };
 
-      fetch(`http://localhost:3000/api/expenses/${transaction.id}`, {
+      fetch(`http://localhost:5000/api/expenses/${transaction.id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
