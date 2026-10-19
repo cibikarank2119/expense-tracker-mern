@@ -1,6 +1,7 @@
 import React from 'react';
 import { useExpenseContext } from '../contexts/ExpenseContext';
 import { formatCurrency } from '../utils/formatUtils';
+import CurrencyConverter from './CurrencyConverter';
 
 const SummaryCard = ({ title, amount, icon, className, trend, percentage }) => {
   return (
@@ -134,7 +135,7 @@ const Dashboard = () => {
           }
         />
       </div>
-      
+            <CurrencyConverter balance={netBalance} />
       {transactions.length > 0 && (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
           <div className="lg:col-span-2 bg-white dark:bg-gray-800 rounded-xl shadow-md p-6">
