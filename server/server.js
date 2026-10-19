@@ -6,7 +6,8 @@ const mongoose = require("mongoose");
 const cors = require("cors");
 require("dotenv").config();
 
-const expenseRoutes = require("./routes/expenseRoutes");  // ✅ matches your actual filename
+const expenseRoutes = require("./routes/expenseRoutes"); // ✅ matches your actual filename
+const authRoutes = require("./routes/authRoutes"); 
 
 const app = express();
 
@@ -17,6 +18,7 @@ app.use(cors());
 
 // ⚠️ FIX #2 — route must be mounted BEFORE app.listen, with matching path
 app.use("/api/expenses", expenseRoutes);
+app.use("/api/auth", authRoutes);
 
 const PORT = process.env.PORT || 3000;
 
