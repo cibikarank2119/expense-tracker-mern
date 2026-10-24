@@ -1,7 +1,14 @@
+
 const mongoose = require("mongoose");
 
 const expenseSchema = new mongoose.Schema(
   {
+    userId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      required: true,
+      index: true,
+    },
     title: {
       type: String,
       required: true,
@@ -11,7 +18,8 @@ const expenseSchema = new mongoose.Schema(
       required: true,
     },
     type: {
-      type: String, // "income" or "expense"
+      type: String,
+      enum: ["income", "expense"],
       required: true,
     },
     category: {
@@ -26,5 +34,4 @@ const expenseSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
-// ⚠️ FIX: export the MODEL, not the schema
 module.exports = mongoose.model("Expense", expenseSchema);
