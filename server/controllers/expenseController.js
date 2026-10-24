@@ -1,3 +1,4 @@
+
 const Expense = require("../models/Expense");
 
 // POST /api/expenses
@@ -5,11 +6,19 @@ const addExpense = async (req, res) => {
   try {
     const { title, amount, type, category, date } = req.body;
 
-    if (!title || !amount || !type) {
+    if (!title || amount === undefined || !type) {
       return res.status(400).json({ message: "Missing required fields" });
     }
 
-    const newExpense = new Expense({ title, amount, type, category, date });
+    const newExpense = new Expense({
+      userId: req.userId,
+      title,
+      amount,
+      type,
+      category,
+      date,
+    });
+
     const saved = await newExpense.save();
     res.status(201).json(saved);
   } catch (error) {
@@ -21,7 +30,10 @@ const addExpense = async (req, res) => {
 // GET /api/expenses
 const getExpenses = async (req, res) => {
   try {
-    const expenses = await Expense.find().sort({ date: -1 });
+    const expenses = await Expense.find({
+      userId: req.userId,
+    }).sort({ date: -1 });
+
     res.status(200).json(expenses);
   } catch (error) {
     console.error("Fetch error:", error.message);
@@ -29,14 +41,13 @@ const getExpenses = async (req, res) => {
   }
 };
 
-// PUT /api/expenses/:id  ⚠️ NEW
+// PUT /api/expenses/:id
 const updateExpense = async (req, res) => {
   try {
-    const { id } = req.params;
     const { title, amount, type, category, date } = req.body;
 
-    const updated = await Expense.findByIdAndUpdate(
-      id,
+    const updated = await Expense.findOneAndUpdate(
+      { _id: req.params.id, userId: req.userId },
       { title, amount, type, category, date },
       { new: true, runValidators: true }
     );
@@ -52,11 +63,13 @@ const updateExpense = async (req, res) => {
   }
 };
 
-// DELETE /api/expenses/:id  ⚠️ NEW
+// DELETE /api/expenses/:id
 const deleteExpense = async (req, res) => {
   try {
-    const { id } = req.params;
-    const deleted = await Expense.findByIdAndDelete(id);
+    const deleted = await Expense.findOneAndDelete({
+      _id: req.params.id,
+      userId: req.userId,
+    });
 
     if (!deleted) {
       return res.status(404).json({ message: "Expense not found" });
@@ -69,4 +82,9 @@ const deleteExpense = async (req, res) => {
   }
 };
 
-module.exports = { addExpense, getExpenses, updateExpense, deleteExpense };
+module.exports = {
+  addExpense,
+  getExpenses,
+  updateExpense,
+  deleteExpense,
+};
