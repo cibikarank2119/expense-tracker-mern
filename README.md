@@ -11,15 +11,23 @@ A full stack personal finance application built with MongoDB Atlas, Express, Rea
 
 ## Screenshots
 
-| Login | Transactions |
-|---|---|
-| ![Login page](<img width="1366" height="768" alt="finished(ss3)" src="https://github.com/user-attachments/assets/6b6e5c55-01c8-4b70-9e49-2084e1934ce8" />
-) | ![Transaction manager](<img width="1366" height="768" alt="finished(ss1)" src="https://github.com/user-attachments/assets/cd33e21a-5323-4994-a1b5-c3e93ccb25ac" />
-) |
+<table>
+  <tr>
+    <td align="center" width="50%">
+      <b>Login</b><br>
+      <img src="https://github.com/user-attachments/assets/6b6e5c55-01c8-4b70-9e49-2084e1934ce8" alt="Login page" width="100%">
+    </td>
+    <td align="center" width="50%">
+      <b>Transactions</b><br>
+      <img src="https://github.com/user-attachments/assets/cd33e21a-5323-4994-a1b5-c3e93ccb25ac" alt="Transaction manager" width="100%">
+    </td>
+  </tr>
+</table>
 
-![Charts dashboard](<img width="1366" height="768" alt="finished(ss2)" src="https://github.com/user-attachments/assets/6a93e612-aaba-4e34-b048-9a1dc7497bd1" />
-)
-
+<p align="center">
+  <b>Charts Dashboard</b><br>
+  <img src="https://github.com/user-attachments/assets/6a93e612-aaba-4e34-b048-9a1dc7497bd1" alt="Charts dashboard" width="80%">
+</p>
 ## Table of Contents
 
 - [Screenshots](#screenshots)
