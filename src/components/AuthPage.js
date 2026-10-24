@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 
-const API = "http://localhost:5000/api/auth";
+const API = "https://expense-tracker-api-6n6t.onrender.com/api/auth";
 
 export default function AuthPage({ onAuth }) {
   const [mode, setMode] = useState("login");
