@@ -1,4 +1,4 @@
-```jsx
+
 import React, { useEffect, useState } from 'react';
 import { ExpenseProvider, useExpenseContext } from './contexts/ExpenseContext';
 import MainLayout from './components/MainLayout';
@@ -66,4 +66,3 @@ function App() {
 }
 
 export default App;
-```
