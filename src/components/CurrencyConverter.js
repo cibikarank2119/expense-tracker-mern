@@ -20,7 +20,7 @@ const CurrencyConverter = ({ balance }) => {
         if (data.result === 'success') {
           setRates(data.conversion_rates);
         } else {
-          setError('Could not load exchange rates');
+          setError(`Could not load exchange rates (${data['error-type'] || 'unknown'})`);
         }
         setLoading(false);
       })
