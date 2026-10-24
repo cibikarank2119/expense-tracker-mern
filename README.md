@@ -13,9 +13,12 @@ A full stack personal finance application built with MongoDB Atlas, Express, Rea
 
 | Login | Transactions |
 |---|---|
-| ![Login page](screenshot%28ss%29finished/finished%28ss1%29.png) | ![Transaction manager](screenshot%28ss%29finished/finished%28ss3%29.png) |
+| ![Login page](<img width="1366" height="768" alt="finished(ss3)" src="https://github.com/user-attachments/assets/6b6e5c55-01c8-4b70-9e49-2084e1934ce8" />
+) | ![Transaction manager](<img width="1366" height="768" alt="finished(ss1)" src="https://github.com/user-attachments/assets/cd33e21a-5323-4994-a1b5-c3e93ccb25ac" />
+) |
 
-![Charts dashboard](screenshot%28ss%29finished/finished%28ss2%29.png)
+![Charts dashboard](<img width="1366" height="768" alt="finished(ss2)" src="https://github.com/user-attachments/assets/6a93e612-aaba-4e34-b048-9a1dc7497bd1" />
+)
 
 ## Table of Contents
 
