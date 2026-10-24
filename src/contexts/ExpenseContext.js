@@ -1,8 +1,16 @@
-import React, { createContext, useContext, useReducer, useEffect } from 'react';
+```jsx
+import React, {
+  createContext,
+  useContext,
+  useReducer,
+  useEffect,
+  useState,
+} from 'react';
 import { v4 as uuidv4 } from 'uuid';
 import { dummyData } from '../utils/dummyData';
 
-// Define initial state
+const API_URL = 'https://expense-tracker-api-6n6t.onrender.com/api/expenses';
+
 const initialState = {
   transactions: [],
   categories: [
@@ -18,7 +26,6 @@ const initialState = {
   isDemoData: false,
 };
 
-// Define action types
 const ADD_TRANSACTION = 'ADD_TRANSACTION';
 const DELETE_TRANSACTION = 'DELETE_TRANSACTION';
 const EDIT_TRANSACTION = 'EDIT_TRANSACTION';
@@ -30,54 +37,39 @@ const IMPORT_DATA = 'IMPORT_DATA';
 const LOAD_DEMO_DATA = 'LOAD_DEMO_DATA';
 const CLEAR_DEMO_DATA = 'CLEAR_DEMO_DATA';
 
-// Define reducer function
 const expenseReducer = (state, action) => {
   switch (action.type) {
-    case ADD_TRANSACTION: {
-      if (!action.payload.id) {
-        console.error('Attempting to add transaction without ID');
-        return state;
-      }
-      console.log('REDUCER - Adding transaction:', action.payload);
+    case ADD_TRANSACTION:
       return {
         ...state,
         transactions: [...state.transactions, action.payload],
+        isDemoData: false,
       };
-    }
-    case DELETE_TRANSACTION: {
-      console.log('REDUCER - Deleting transaction with ID:', action.payload);
-      const updatedTransactions = state.transactions.filter(
-        (transaction) => transaction.id !== action.payload
-      );
-      console.log('REDUCER - Transactions after deletion:', updatedTransactions);
+
+    case DELETE_TRANSACTION:
       return {
         ...state,
-        transactions: updatedTransactions,
+        transactions: state.transactions.filter(
+          (transaction) => transaction.id !== action.payload
+        ),
       };
-    }
-    case EDIT_TRANSACTION: {
-      if (!action.payload.id) {
-        console.error('Attempting to edit transaction without ID');
-        return state;
-      }
-      console.log('REDUCER - Editing transaction:', action.payload);
-      const updatedTransactions = state.transactions.map((transaction) => {
-        if (transaction.id === action.payload.id) {
-          return { ...action.payload };
-        }
-        return transaction;
-      });
-      console.log('REDUCER - Transactions after edit:', updatedTransactions);
+
+    case EDIT_TRANSACTION:
       return {
         ...state,
-        transactions: updatedTransactions,
+        transactions: state.transactions.map((transaction) =>
+          transaction.id === action.payload.id
+            ? action.payload
+            : transaction
+        ),
       };
-    }
+
     case ADD_CATEGORY:
       return {
         ...state,
         categories: [...state.categories, action.payload],
       };
+
     case DELETE_CATEGORY:
       return {
         ...state,
@@ -85,323 +77,367 @@ const expenseReducer = (state, action) => {
           (category) => category.id !== action.payload
         ),
       };
+
     case TOGGLE_DARK_MODE:
       return {
         ...state,
         darkMode: !state.darkMode,
       };
+
     case LOAD_DATA:
       return {
         ...state,
         ...action.payload,
       };
+
     case IMPORT_DATA:
       return {
         ...state,
-        transactions: [...state.transactions, ...action.payload.transactions],
-        categories: [...state.categories.filter(cat =>
-          !action.payload.categories.some(importedCat => importedCat.id === cat.id)
-        ), ...action.payload.categories],
+        transactions: [
+          ...state.transactions,
+          ...(action.payload.transactions || []),
+        ],
+        categories: [
+          ...state.categories.filter(
+            (category) =>
+              !(action.payload.categories || []).some(
+                (imported) => imported.id === category.id
+              )
+          ),
+          ...(action.payload.categories || []),
+        ],
       };
+
     case LOAD_DEMO_DATA:
       return {
         ...state,
-        transactions: dummyData.transactions,
+        transactions: dummyData.transactions.map((transaction) => ({
+          ...transaction,
+          id: transaction.id || uuidv4(),
+        })),
         isDemoData: true,
       };
+
     case CLEAR_DEMO_DATA:
       return {
         ...state,
         transactions: [],
         isDemoData: false,
       };
+
     default:
       return state;
   }
 };
 
-// Create context
 const ExpenseContext = createContext();
 
-// Create provider component
-export const ExpenseProvider = ({ children }) => {
+export const ExpenseProvider = ({ children, token, user }) => {
   const [state, dispatch] = useReducer(expenseReducer, initialState);
+  const [storageLoaded, setStorageLoaded] = useState(false);
 
-  // Check if we have any data; if not, load demo data
+  const userId = user?.id || user?._id;
+  const storageKey = userId
+    ? `expenseTrackerData_${userId}`
+    : null;
+
+  // Load this user's local data. Never automatically load demo transactions.
   useEffect(() => {
+    setStorageLoaded(false);
+
+    if (!storageKey) {
+      setStorageLoaded(true);
+      return;
+    }
+
     try {
-      const savedData = localStorage.getItem('expenseTrackerData');
+      const savedData = localStorage.getItem(storageKey);
+
       if (savedData) {
         const parsedData = JSON.parse(savedData);
-        if (parsedData.transactions) {
-          parsedData.transactions = parsedData.transactions.map(transaction => {
-            if (!transaction.id) {
-              transaction.id = uuidv4();
-            }
-            return transaction;
-          });
-        }
-        dispatch({ type: LOAD_DATA, payload: parsedData });
-      } else {
-        loadDemoData();
+
+        dispatch({
+          type: LOAD_DATA,
+          payload: {
+            categories: parsedData.categories || initialState.categories,
+            darkMode: parsedData.darkMode ?? false,
+            isDemoData: false,
+          },
+        });
       }
     } catch (error) {
-      console.error("Error loading data from localStorage:", error);
-      loadDemoData();
+      console.error('Error loading this user’s local data:', error);
+    } finally {
+      setStorageLoaded(true);
     }
-  }, []);
+  }, [storageKey]);
 
-  // ⚠️ NEW — fetch real data from MongoDB on app load
+  // Load only transactions belonging to the authenticated user.
   useEffect(() => {
-    fetch("https://expense-tracker-api-6n6t.onrender.com/api/expenses")
-      .then((res) => res.json())
-      .then((data) => {
-        console.log("Fetched from backend:", data);
-        const mapped = data.map((item) => ({
+    if (!token || !userId) return;
+
+    const controller = new AbortController();
+
+    const fetchTransactions = async () => {
+      try {
+        const response = await fetch(API_URL, {
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+          signal: controller.signal,
+        });
+
+        if (!response.ok) {
+          throw new Error(`Could not load transactions (${response.status})`);
+        }
+
+        const data = await response.json();
+
+        if (!Array.isArray(data)) {
+          throw new Error('Unexpected transactions response from server');
+        }
+
+        const transactions = data.map((item) => ({
           id: item._id,
           description: item.title,
-          amount: item.amount,
+          amount: Number(item.amount),
           date: item.date,
-          category: item.category,
+          category: item.category || 'other',
           type: item.type,
         }));
-        dispatch({ type: LOAD_DATA, payload: { transactions: mapped } });
-      })
-      .catch((err) => console.error("Error fetching from backend:", err));
-  }, []);
 
-  // Save data to localStorage whenever state changes
+        dispatch({
+          type: LOAD_DATA,
+          payload: {
+            transactions,
+            isDemoData: false,
+          },
+        });
+      } catch (error) {
+        if (error.name !== 'AbortError') {
+          console.error('Error fetching transactions:', error);
+        }
+      }
+    };
+
+    fetchTransactions();
+
+    return () => controller.abort();
+  }, [token, userId]);
+
+  // Save state under this user's own localStorage key.
   useEffect(() => {
-    try {
-      localStorage.setItem('expenseTrackerData', JSON.stringify({
-        transactions: state.transactions,
-        categories: state.categories,
-        darkMode: state.darkMode,
-        isDemoData: state.isDemoData,
-      }));
-    } catch (error) {
-      console.error("Error saving data to localStorage:", error);
-    }
-  }, [state]);
+    if (!storageKey || !storageLoaded) return;
 
-  // Calculate totals
+    try {
+      localStorage.setItem(
+        storageKey,
+        JSON.stringify({
+          transactions: state.transactions,
+          categories: state.categories,
+          darkMode: state.darkMode,
+          isDemoData: state.isDemoData,
+        })
+      );
+    } catch (error) {
+      console.error('Error saving local data:', error);
+    }
+  }, [state, storageKey, storageLoaded]);
+
   const totalIncome = state.transactions
     .filter((transaction) => transaction.type === 'income')
-    .reduce((acc, transaction) => acc + Number(transaction.amount), 0);
+    .reduce((total, transaction) => total + Number(transaction.amount), 0);
 
   const totalExpenses = state.transactions
     .filter((transaction) => transaction.type === 'expense')
-    .reduce((acc, transaction) => acc + Number(transaction.amount), 0);
+    .reduce((total, transaction) => total + Number(transaction.amount), 0);
 
   const netBalance = totalIncome - totalExpenses;
 
-  // Action creators
-  const addTransaction = (transaction) => {
-    try {
-      const newId = uuidv4();
-      console.log('ACTION - Adding transaction with new ID:', newId);
-      console.log('ACTION - Transaction data:', transaction);
+  // Add transaction to the authenticated user's account.
+  const addTransaction = async (transaction) => {
+    if (!token) throw new Error('Please log in again.');
 
-      const newTransaction = {
-        id: newId,
-        description: transaction.description,
-        amount: parseFloat(transaction.amount),
-        date: transaction.date || new Date().toISOString().split('T')[0],
+    const response = await fetch(API_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({
+        title: transaction.description,
+        amount: Number(transaction.amount),
         category: transaction.category || 'other',
         type: transaction.type || 'expense',
-      };
+        date: transaction.date || new Date().toISOString().split('T')[0],
+      }),
+    });
 
-      console.log('ACTION - Formatted transaction:', newTransaction);
-
-      fetch("https://expense-tracker-api-6n6t.onrender.com/api/expenses", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          title: newTransaction.description,
-          amount: newTransaction.amount,
-          category: newTransaction.category,
-          type: newTransaction.type,
-          date: newTransaction.date,
-        }),
-      })
-        .then((res) => res.json())
-        .then((saved) => console.log("Saved to backend:", saved))
-        .catch((err) => console.error("Error saving to backend:", err));
-
-      dispatch({
-        type: ADD_TRANSACTION,
-        payload: newTransaction,
-      });
-
-      return newTransaction;
-    } catch (error) {
-      console.error("Error adding transaction:", error);
+    if (!response.ok) {
+      throw new Error('Could not save transaction. Please try again.');
     }
+
+    const result = await response.json();
+    const saved = result.expense || result;
+
+    const newTransaction = {
+      id: saved._id,
+      description: saved.title,
+      amount: Number(saved.amount),
+      date: saved.date,
+      category: saved.category || 'other',
+      type: saved.type,
+    };
+
+    if (!newTransaction.id) {
+      throw new Error('Server did not return the saved transaction ID.');
+    }
+
+    dispatch({
+      type: ADD_TRANSACTION,
+      payload: newTransaction,
+    });
+
+    return newTransaction;
   };
 
- const deleteTransaction = (id) => {
-    try {
-      if (!id) {
-        console.error("Attempt to delete transaction without ID");
-        return;
-      }
+  // Delete only a transaction owned by the authenticated user.
+  const deleteTransaction = async (id) => {
+    if (!token || !id) throw new Error('Please log in again.');
 
-      const transactionToDelete = state.transactions.find(t => t.id === id);
-      if (!transactionToDelete) {
-        console.error(`Transaction with ID ${id} not found`);
-        return;
-      }
+    const response = await fetch(`${API_URL}/${id}`, {
+      method: 'DELETE',
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    });
 
-      fetch(`https://expense-tracker-api-6n6t.onrender.com/api/expenses/${id}`, {
-        method: "DELETE",
-      })
-        .then((res) => res.json())
-        .then((data) => console.log("Deleted from backend:", data))
-        .catch((err) => console.error("Error deleting from backend:", err));
-
-      dispatch({
-        type: DELETE_TRANSACTION,
-        payload: id,
-      });
-    } catch (error) {
-      console.error("Error deleting transaction:", error);
+    if (!response.ok) {
+      throw new Error('Could not delete transaction.');
     }
+
+    dispatch({
+      type: DELETE_TRANSACTION,
+      payload: id,
+    });
   };
 
-  const editTransaction = (transaction) => {
-    try {
-      if (!transaction || !transaction.id) {
-        console.error("Invalid transaction or missing ID for edit");
-        return;
-      }
-
-      const existingTransaction = state.transactions.find(t => t.id === transaction.id);
-      if (!existingTransaction) {
-        console.error(`Transaction with ID ${transaction.id} not found for editing`);
-        return;
-      }
-
-      const updatedTransaction = {
-        ...transaction,
-        amount: parseFloat(transaction.amount),
-      };
-
-      fetch(`https://expense-tracker-api-6n6t.onrender.com/api/expenses/${transaction.id}`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          title: updatedTransaction.description,
-          amount: updatedTransaction.amount,
-          category: updatedTransaction.category,
-          type: updatedTransaction.type,
-          date: updatedTransaction.date,
-        }),
-      })
-        .then((res) => res.json())
-        .then((data) => console.log("Updated in backend:", data))
-        .catch((err) => console.error("Error updating in backend:", err));
-
-      dispatch({
-        type: EDIT_TRANSACTION,
-        payload: updatedTransaction,
-      });
-
-      return updatedTransaction;
-    } catch (error) {
-      console.error("Error editing transaction:", error);
+  // Update only a transaction owned by the authenticated user.
+  const editTransaction = async (transaction) => {
+    if (!token || !transaction?.id) {
+      throw new Error('Invalid transaction or login session.');
     }
+
+    const response = await fetch(`${API_URL}/${transaction.id}`, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({
+        title: transaction.description,
+        amount: Number(transaction.amount),
+        category: transaction.category || 'other',
+        type: transaction.type,
+        date: transaction.date,
+      }),
+    });
+
+    if (!response.ok) {
+      throw new Error('Could not update transaction.');
+    }
+
+    const result = await response.json();
+    const saved = result.expense || result;
+
+    const updatedTransaction = {
+      id: saved._id || transaction.id,
+      description: saved.title ?? transaction.description,
+      amount: Number(saved.amount ?? transaction.amount),
+      date: saved.date ?? transaction.date,
+      category: saved.category ?? transaction.category,
+      type: saved.type ?? transaction.type,
+    };
+
+    dispatch({
+      type: EDIT_TRANSACTION,
+      payload: updatedTransaction,
+    });
+
+    return updatedTransaction;
   };
 
   const addCategory = (category) => {
-    try {
-      const newCategory = {
-        id: category.name.toLowerCase().replace(/\s+/g, '_'),
-        ...category,
-      };
-      dispatch({
-        type: ADD_CATEGORY,
-        payload: newCategory,
-      });
-      return newCategory;
-    } catch (error) {
-      console.error("Error adding category:", error);
-    }
+    const newCategory = {
+      ...category,
+      id: category.name.toLowerCase().replace(/\s+/g, '_'),
+    };
+
+    dispatch({
+      type: ADD_CATEGORY,
+      payload: newCategory,
+    });
+
+    return newCategory;
   };
 
   const deleteCategory = (id) => {
-    try {
-      if (!id) {
-        console.error("Attempt to delete category without ID");
-        return;
-      }
-      dispatch({
-        type: DELETE_CATEGORY,
-        payload: id,
-      });
-    } catch (error) {
-      console.error("Error deleting category:", error);
-    }
+    dispatch({
+      type: DELETE_CATEGORY,
+      payload: id,
+    });
   };
 
   const importData = (data) => {
-    try {
-      if (data.transactions) {
-        data.transactions = data.transactions.map(transaction => {
-          if (!transaction.id) {
-            transaction.id = uuidv4();
-          }
-          return transaction;
-        });
-      }
-      dispatch({
-        type: IMPORT_DATA,
-        payload: data,
-      });
-    } catch (error) {
-      console.error("Error importing data:", error);
-    }
+    const transactions = (data.transactions || []).map((transaction) => ({
+      ...transaction,
+      id: transaction.id || uuidv4(),
+    }));
+
+    dispatch({
+      type: IMPORT_DATA,
+      payload: {
+        transactions,
+        categories: data.categories || [],
+      },
+    });
   };
 
+  // Demo data is available only when explicitly requested in the UI.
   const loadDemoData = () => {
-    try {
-      console.log("Loading demo data");
-      dispatch({ type: LOAD_DEMO_DATA });
-    } catch (error) {
-      console.error("Error loading demo data:", error);
-    }
+    dispatch({ type: LOAD_DEMO_DATA });
   };
 
   const clearDemoData = () => {
-    try {
-      console.log("Clearing demo data");
-      dispatch({ type: CLEAR_DEMO_DATA });
-    } catch (error) {
-      console.error("Error clearing demo data:", error);
-    }
+    dispatch({ type: CLEAR_DEMO_DATA });
   };
 
   const toggleDarkMode = () => {
     dispatch({ type: TOGGLE_DARK_MODE });
   };
 
-  // Group expenses by category
   const expensesByCategory = state.transactions
     .filter((transaction) => transaction.type === 'expense')
     .reduce((categories, transaction) => {
       const category = transaction.category;
+
       if (!categories[category]) {
         categories[category] = 0;
       }
+
       categories[category] += Number(transaction.amount);
       return categories;
     }, {});
 
   const categoryData = Object.entries(expensesByCategory).map(
     ([categoryId, amount]) => {
-      const category = state.categories.find((cat) => cat.id === categoryId) || {
+      const category = state.categories.find(
+        (item) => item.id === categoryId
+      ) || {
         name: categoryId,
         color: '#888',
       };
+
       return {
         id: categoryId,
         name: category.name,
@@ -416,31 +452,33 @@ export const ExpenseProvider = ({ children }) => {
     const months = {};
 
     state.transactions.forEach((transaction) => {
-      try {
-        const date = new Date(transaction.date);
-        const monthKey = `${date.getFullYear()}-${date.getMonth() + 1}`;
+      const date = new Date(transaction.date);
 
-        if (!months[monthKey]) {
-          months[monthKey] = {
-            income: 0,
-            expense: 0,
-            label: new Date(date.getFullYear(), date.getMonth(), 1)
-              .toLocaleDateString('en-US', { month: 'short', year: 'numeric' }),
-          };
-        }
+      if (Number.isNaN(date.getTime())) return;
 
-        if (transaction.type === 'income') {
-          months[monthKey].income += Number(transaction.amount);
-        } else {
-          months[monthKey].expense += Number(transaction.amount);
-        }
-      } catch (error) {
-        console.error("Error processing transaction for monthly data:", transaction, error);
+      const monthKey = `${date.getFullYear()}-${date.getMonth() + 1}`;
+
+      if (!months[monthKey]) {
+        months[monthKey] = {
+          income: 0,
+          expense: 0,
+          label: new Date(date.getFullYear(), date.getMonth(), 1)
+            .toLocaleDateString('en-US', {
+              month: 'short',
+              year: 'numeric',
+            }),
+        };
+      }
+
+      if (transaction.type === 'income') {
+        months[monthKey].income += Number(transaction.amount);
+      } else {
+        months[monthKey].expense += Number(transaction.amount);
       }
     });
 
-    return Object.values(months).sort((a, b) =>
-      new Date(a.label) - new Date(b.label)
+    return Object.values(months).sort(
+      (a, b) => new Date(a.label) - new Date(b.label)
     );
   };
 
@@ -474,8 +512,13 @@ export const ExpenseProvider = ({ children }) => {
 
 export const useExpenseContext = () => {
   const context = useContext(ExpenseContext);
+
   if (!context) {
-    throw new Error('useExpenseContext must be used within an ExpenseProvider');
+    throw new Error(
+      'useExpenseContext must be used within an ExpenseProvider'
+    );
   }
+
   return context;
 };
+```
