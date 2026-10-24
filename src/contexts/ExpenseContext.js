@@ -1,9 +1,9 @@
-```jsx
 import React, {
   createContext,
   useContext,
   useReducer,
   useEffect,
+  useMemo,
   useState,
 } from 'react';
 import { v4 as uuidv4 } from 'uuid';
@@ -36,13 +36,50 @@ const LOAD_DATA = 'LOAD_DATA';
 const IMPORT_DATA = 'IMPORT_DATA';
 const LOAD_DEMO_DATA = 'LOAD_DEMO_DATA';
 const CLEAR_DEMO_DATA = 'CLEAR_DEMO_DATA';
+const RESET_STATE = 'RESET_STATE';
+
+// ---------- helpers ----------
+
+// Local date as YYYY-MM-DD (toISOString() gives the UTC date, which is
+// "yesterday" in India between 12:00 AM and 5:30 AM).
+const getTodayLocal = () => {
+  const d = new Date();
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${d.getFullYear()}-${month}-${day}`;
+};
+
+// Convert a server record (title/_id) to the shape the UI uses.
+const normalizeTransaction = (item, fallback = {}) => ({
+  id: item._id || item.id || fallback.id,
+  description: item.title ?? fallback.description,
+  amount: Number(item.amount ?? fallback.amount),
+  date: item.date ?? fallback.date,
+  category: item.category || fallback.category || 'other',
+  type: item.type ?? fallback.type,
+});
+
+// Read the server's error message if it sent one.
+const getErrorMessage = async (response, fallback) => {
+  try {
+    const data = await response.json();
+    return data.message || data.error || fallback;
+  } catch {
+    return fallback;
+  }
+};
+
+// ---------- reducer ----------
 
 const expenseReducer = (state, action) => {
   switch (action.type) {
     case ADD_TRANSACTION:
       return {
         ...state,
-        transactions: [...state.transactions, action.payload],
+        // If demo data is showing, replace it instead of mixing it with real data
+        transactions: state.isDemoData
+          ? [action.payload]
+          : [...state.transactions, action.payload],
         isDemoData: false,
       };
 
@@ -58,9 +95,7 @@ const expenseReducer = (state, action) => {
       return {
         ...state,
         transactions: state.transactions.map((transaction) =>
-          transaction.id === action.payload.id
-            ? action.payload
-            : transaction
+          transaction.id === action.payload.id ? action.payload : transaction
         ),
       };
 
@@ -90,23 +125,24 @@ const expenseReducer = (state, action) => {
         ...action.payload,
       };
 
-    case IMPORT_DATA:
+    case IMPORT_DATA: {
+      const importedCategories = action.payload.categories || [];
       return {
         ...state,
         transactions: [
-          ...state.transactions,
+          ...(state.isDemoData ? [] : state.transactions),
           ...(action.payload.transactions || []),
         ],
         categories: [
           ...state.categories.filter(
             (category) =>
-              !(action.payload.categories || []).some(
-                (imported) => imported.id === category.id
-              )
+              !importedCategories.some((imported) => imported.id === category.id)
           ),
-          ...(action.payload.categories || []),
+          ...importedCategories,
         ],
+        isDemoData: false,
       };
+    }
 
     case LOAD_DEMO_DATA:
       return {
@@ -125,6 +161,9 @@ const expenseReducer = (state, action) => {
         isDemoData: false,
       };
 
+    case RESET_STATE:
+      return initialState;
+
     default:
       return state;
   }
@@ -134,19 +173,20 @@ const ExpenseContext = createContext();
 
 export const ExpenseProvider = ({ children, token, user }) => {
   const [state, dispatch] = useReducer(expenseReducer, initialState);
-  const [storageLoaded, setStorageLoaded] = useState(false);
+  const [loadedKey, setLoadedKey] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
 
-   const userId = user?.id || user?._id;
-  const storageKey = userId
-    ? `expenseTrackerData_${userId}`
-    : null;
+  const userId = user?.id || user?._id;
+  const storageKey = userId ? `expenseTrackerData_${userId}` : null;
 
-  // Load this user's local data. Never automatically load demo transactions.
+  // 1) When the user changes (login / logout / switch account):
+  //    wipe the previous user's data, then load this user's local settings.
   useEffect(() => {
-    setStorageLoaded(false);
+    dispatch({ type: RESET_STATE });
 
     if (!storageKey) {
-      setStorageLoaded(true);
+      setLoadedKey(null);
       return;
     }
 
@@ -161,34 +201,39 @@ export const ExpenseProvider = ({ children, token, user }) => {
           payload: {
             categories: parsedData.categories || initialState.categories,
             darkMode: parsedData.darkMode ?? false,
-            isDemoData: false,
           },
         });
       }
-    } catch (error) {
-      console.error('Error loading this user’s local data:', error);
+    } catch (err) {
+      console.error('Error loading local settings:', err);
     } finally {
-      setStorageLoaded(true);
+      setLoadedKey(storageKey);
     }
   }, [storageKey]);
 
-  // Load only transactions belonging to the authenticated user.
+  // 2) Load the authenticated user's transactions from the server.
   useEffect(() => {
     if (!token || !userId) return;
 
     const controller = new AbortController();
 
     const fetchTransactions = async () => {
+      setLoading(true);
+      setError(null);
+
       try {
         const response = await fetch(API_URL, {
-          headers: {
-            Authorization: `Bearer ${token}`,
-          },
+          headers: { Authorization: `Bearer ${token}` },
           signal: controller.signal,
         });
 
         if (!response.ok) {
-          throw new Error(`Could not load transactions (${response.status})`);
+          throw new Error(
+            await getErrorMessage(
+              response,
+              `Could not load transactions (${response.status})`
+            )
+          );
         }
 
         const data = await response.json();
@@ -197,26 +242,20 @@ export const ExpenseProvider = ({ children, token, user }) => {
           throw new Error('Unexpected transactions response from server');
         }
 
-        const transactions = data.map((item) => ({
-          id: item._id,
-          description: item.title,
-          amount: Number(item.amount),
-          date: item.date,
-          category: item.category || 'other',
-          type: item.type,
-        }));
-
         dispatch({
           type: LOAD_DATA,
           payload: {
-            transactions,
+            transactions: data.map((item) => normalizeTransaction(item)),
             isDemoData: false,
           },
         });
-      } catch (error) {
-        if (error.name !== 'AbortError') {
-          console.error('Error fetching transactions:', error);
+      } catch (err) {
+        if (err.name !== 'AbortError') {
+          console.error('Error fetching transactions:', err);
+          setError(err.message);
         }
+      } finally {
+        if (!controller.signal.aborted) setLoading(false);
       }
     };
 
@@ -225,38 +264,115 @@ export const ExpenseProvider = ({ children, token, user }) => {
     return () => controller.abort();
   }, [token, userId]);
 
-  // Save state under this user's own localStorage key.
+  // 3) Save only settings (categories + dark mode) locally.
+  //    Transactions live on the server, so they are not copied to localStorage.
+  //    Saving waits until this exact user's data has been loaded, so one
+  //    user's data can never be written under another user's key.
   useEffect(() => {
-    if (!storageKey || !storageLoaded) return;
+    if (!storageKey || loadedKey !== storageKey) return;
 
     try {
       localStorage.setItem(
         storageKey,
         JSON.stringify({
-          transactions: state.transactions,
           categories: state.categories,
           darkMode: state.darkMode,
-          isDemoData: state.isDemoData,
         })
       );
-    } catch (error) {
-      console.error('Error saving local data:', error);
+    } catch (err) {
+      console.error('Error saving local settings:', err);
     }
-  }, [state, storageKey, storageLoaded]);
+  }, [state.categories, state.darkMode, storageKey, loadedKey]);
 
-  const totalIncome = state.transactions
-    .filter((transaction) => transaction.type === 'income')
-    .reduce((total, transaction) => total + Number(transaction.amount), 0);
+  // ---------- derived values ----------
 
-  const totalExpenses = state.transactions
-    .filter((transaction) => transaction.type === 'expense')
-    .reduce((total, transaction) => total + Number(transaction.amount), 0);
+  const { totalIncome, totalExpenses } = useMemo(() => {
+    let income = 0;
+    let expenses = 0;
+
+    state.transactions.forEach((transaction) => {
+      if (transaction.type === 'income') income += Number(transaction.amount);
+      else if (transaction.type === 'expense')
+        expenses += Number(transaction.amount);
+    });
+
+    return { totalIncome: income, totalExpenses: expenses };
+  }, [state.transactions]);
 
   const netBalance = totalIncome - totalExpenses;
 
-  // Add transaction to the authenticated user's account.
-  const addTransaction = async (transaction) => {
+  const categoryData = useMemo(() => {
+    const expensesByCategory = state.transactions
+      .filter((transaction) => transaction.type === 'expense')
+      .reduce((acc, transaction) => {
+        acc[transaction.category] =
+          (acc[transaction.category] || 0) + Number(transaction.amount);
+        return acc;
+      }, {});
+
+    return Object.entries(expensesByCategory).map(([categoryId, amount]) => {
+      const category = state.categories.find((item) => item.id === categoryId) || {
+        name: categoryId,
+        color: '#888',
+      };
+
+      return {
+        id: categoryId,
+        name: category.name,
+        amount,
+        percentage: totalExpenses > 0 ? (amount / totalExpenses) * 100 : 0,
+        color: category.color,
+      };
+    });
+  }, [state.transactions, state.categories, totalExpenses]);
+
+  const getMonthlyData = () => {
+    const months = {};
+
+    state.transactions.forEach((transaction) => {
+      // Read year/month straight from "YYYY-MM-DD..." to avoid timezone shifts
+      const match = String(transaction.date).match(/^(\d{4})-(\d{2})/);
+      if (!match) return;
+
+      const year = Number(match[1]);
+      const month = Number(match[2]);
+      const monthKey = `${year}-${String(month).padStart(2, '0')}`;
+
+      if (!months[monthKey]) {
+        months[monthKey] = {
+          key: monthKey, // sortable: "2026-09" < "2026-10"
+          income: 0,
+          expense: 0,
+          label: new Date(year, month - 1, 1).toLocaleDateString('en-US', {
+            month: 'short',
+            year: 'numeric',
+          }),
+        };
+      }
+
+      if (transaction.type === 'income') {
+        months[monthKey].income += Number(transaction.amount);
+      } else {
+        months[monthKey].expense += Number(transaction.amount);
+      }
+    });
+
+    return Object.values(months).sort((a, b) => a.key.localeCompare(b.key));
+  };
+
+  // ---------- actions ----------
+
+  // Save one transaction to the server and return it in UI shape (no dispatch).
+  const createOnServer = async (transaction) => {
     if (!token) throw new Error('Please log in again.');
+
+    const payload = {
+      title: transaction.description,
+      amount: Number(transaction.amount),
+      category: transaction.category || 'other',
+      type: transaction.type || 'expense',
+      date: transaction.date || getTodayLocal(),
+    };
 
     const response = await fetch(API_URL, {
       method: 'POST',
@@ -264,69 +380,76 @@ export const ExpenseProvider = ({ children, token, user }) => {
         'Content-Type': 'application/json',
         Authorization: `Bearer ${token}`,
       },
-      body: JSON.stringify({
-        title: transaction.description,
-        amount: Number(transaction.amount),
-        category: transaction.category || 'other',
-        type: transaction.type || 'expense',
-        date: transaction.date || new Date().toISOString().split('T')[0],
-      }),
+      body: JSON.stringify(payload),
     });
 
     if (!response.ok) {
-      throw new Error('Could not save transaction. Please try again.');
+      throw new Error(
+        await getErrorMessage(
+          response,
+          'Could not save transaction. Please try again.'
+        )
+      );
     }
 
     const result = await response.json();
     const saved = result.expense || result;
+    const created = normalizeTransaction(saved, {
+      description: payload.title,
+      amount: payload.amount,
+      category: payload.category,
+      type: payload.type,
+      date: payload.date,
+    });
 
-    const newTransaction = {
-      id: saved._id,
-      description: saved.title,
-      amount: Number(saved.amount),
-      date: saved.date,
-      category: saved.category || 'other',
-      type: saved.type,
-    };
-
-    if (!newTransaction.id) {
+    if (!created.id) {
       throw new Error('Server did not return the saved transaction ID.');
     }
 
-    dispatch({
-      type: ADD_TRANSACTION,
-      payload: newTransaction,
-    });
-
-    return newTransaction;
+    return created;
   };
 
-  // Delete only a transaction owned by the authenticated user.
+  const addTransaction = async (transaction) => {
+    const created = await createOnServer(transaction);
+    dispatch({ type: ADD_TRANSACTION, payload: created });
+    return created;
+  };
+
   const deleteTransaction = async (id) => {
-    if (!token || !id) throw new Error('Please log in again.');
+    if (!id) throw new Error('Invalid transaction.');
+
+    // Demo transactions only exist locally – nothing to delete on the server
+    if (state.isDemoData) {
+      dispatch({ type: DELETE_TRANSACTION, payload: id });
+      return;
+    }
+
+    if (!token) throw new Error('Please log in again.');
 
     const response = await fetch(`${API_URL}/${id}`, {
       method: 'DELETE',
-      headers: {
-        Authorization: `Bearer ${token}`,
-      },
+      headers: { Authorization: `Bearer ${token}` },
     });
 
     if (!response.ok) {
-      throw new Error('Could not delete transaction.');
+      throw new Error(
+        await getErrorMessage(response, 'Could not delete transaction.')
+      );
     }
 
-    dispatch({
-      type: DELETE_TRANSACTION,
-      payload: id,
-    });
+    dispatch({ type: DELETE_TRANSACTION, payload: id });
   };
 
-  // Update only a transaction owned by the authenticated user.
   const editTransaction = async (transaction) => {
-    if (!token || !transaction?.id) {
-      throw new Error('Invalid transaction or login session.');
+    if (!transaction?.id) throw new Error('Invalid transaction.');
+
+    // Demo transactions only exist locally
+    if (state.isDemoData) {
+      dispatch({ type: EDIT_TRANSACTION, payload: transaction });
+      return transaction;
     }
+
+    if (!token) throw new Error('Please log in again.');
 
     const response = await fetch(`${API_URL}/${transaction.id}`, {
       method: 'PUT',
@@ -344,143 +467,61 @@ export const ExpenseProvider = ({ children, token, user }) => {
     });
 
     if (!response.ok) {
-      throw new Error('Could not update transaction.');
+      throw new Error(
+        await getErrorMessage(response, 'Could not update transaction.')
+      );
     }
 
     const result = await response.json();
     const saved = result.expense || result;
+    const updated = normalizeTransaction(saved, transaction);
 
-    const updatedTransaction = {
-      id: saved._id || transaction.id,
-      description: saved.title ?? transaction.description,
-      amount: Number(saved.amount ?? transaction.amount),
-      date: saved.date ?? transaction.date,
-      category: saved.category ?? transaction.category,
-      type: saved.type ?? transaction.type,
-    };
-
-    dispatch({
-      type: EDIT_TRANSACTION,
-      payload: updatedTransaction,
-    });
-
-    return updatedTransaction;
+    dispatch({ type: EDIT_TRANSACTION, payload: updated });
+    return updated;
   };
 
   const addCategory = (category) => {
-    const newCategory = {
-      ...category,
-      id: category.name.toLowerCase().replace(/\s+/g, '_'),
-    };
+    const id = category.name.trim().toLowerCase().replace(/\s+/g, '_');
 
-    dispatch({
-      type: ADD_CATEGORY,
-      payload: newCategory,
-    });
+    // Don't create duplicates – return the existing one
+    const existing = state.categories.find((item) => item.id === id);
+    if (existing) return existing;
 
+    const newCategory = { ...category, name: category.name.trim(), id };
+    dispatch({ type: ADD_CATEGORY, payload: newCategory });
     return newCategory;
   };
 
   const deleteCategory = (id) => {
-    dispatch({
-      type: DELETE_CATEGORY,
-      payload: id,
-    });
+    if (id === 'other') return; // fallback category must always exist
+    dispatch({ type: DELETE_CATEGORY, payload: id });
   };
 
-  const importData = (data) => {
-    const transactions = (data.transactions || []).map((transaction) => ({
-      ...transaction,
-      id: transaction.id || uuidv4(),
-    }));
+  // Imported transactions are now saved to the server too, so they
+  // don't disappear on the next page refresh.
+  const importData = async (data) => {
+    const incoming = data.transactions || [];
+
+    const results = await Promise.allSettled(
+      incoming.map((transaction) => createOnServer(transaction))
+    );
+
+    const saved = results
+      .filter((result) => result.status === 'fulfilled')
+      .map((result) => result.value);
 
     dispatch({
       type: IMPORT_DATA,
-      payload: {
-        transactions,
-        categories: data.categories || [],
-      },
-    });
-  };
-
-  // Demo data is available only when explicitly requested in the UI.
-  const loadDemoData = () => {
-    dispatch({ type: LOAD_DEMO_DATA });
-  };
-
-  const clearDemoData = () => {
-    dispatch({ type: CLEAR_DEMO_DATA });
-  };
-
-  const toggleDarkMode = () => {
-    dispatch({ type: TOGGLE_DARK_MODE });
-  };
-
-  const expensesByCategory = state.transactions
-    .filter((transaction) => transaction.type === 'expense')
-    .reduce((categories, transaction) => {
-      const category = transaction.category;
-
-      if (!categories[category]) {
-        categories[category] = 0;
-      }
-
-      categories[category] += Number(transaction.amount);
-      return categories;
-    }, {});
-
-  const categoryData = Object.entries(expensesByCategory).map(
-    ([categoryId, amount]) => {
-      const category = state.categories.find(
-        (item) => item.id === categoryId
-      ) || {
-        name: categoryId,
-        color: '#888',
-      };
-
-      return {
-        id: categoryId,
-        name: category.name,
-        amount,
-        percentage: totalExpenses > 0 ? (amount / totalExpenses) * 100 : 0,
-        color: category.color,
-      };
-    }
-  );
-
-  const getMonthlyData = () => {
-    const months = {};
-
-    state.transactions.forEach((transaction) => {
-      const date = new Date(transaction.date);
-
-      if (Number.isNaN(date.getTime())) return;
-
-      const monthKey = `${date.getFullYear()}-${date.getMonth() + 1}`;
-
-      if (!months[monthKey]) {
-        months[monthKey] = {
-          income: 0,
-          expense: 0,
-          label: new Date(date.getFullYear(), date.getMonth(), 1)
-            .toLocaleDateString('en-US', {
-              month: 'short',
-              year: 'numeric',
-            }),
-        };
-      }
-
-      if (transaction.type === 'income') {
-        months[monthKey].income += Number(transaction.amount);
-      } else {
-        months[monthKey].expense += Number(transaction.amount);
-      }
+      payload: { transactions: saved, categories: data.categories || [] },
     });
 
-    return Object.values(months).sort(
-      (a, b) => new Date(a.label) - new Date(b.label)
-    );
+    return { imported: saved.length, failed: incoming.length - saved.length };
   };
+
+  // Demo data is local only and available only when explicitly requested.
+  const loadDemoData = () => dispatch({ type: LOAD_DEMO_DATA });
+  const clearDemoData = () => dispatch({ type: CLEAR_DEMO_DATA });
+  const toggleDarkMode = () => dispatch({ type: TOGGLE_DARK_MODE });
 
   return (
     <ExpenseContext.Provider
@@ -489,6 +530,8 @@ export const ExpenseProvider = ({ children, token, user }) => {
         categories: state.categories,
         darkMode: state.darkMode,
         isDemoData: state.isDemoData,
+        loading,
+        error,
         totalIncome,
         totalExpenses,
         netBalance,
@@ -514,11 +557,8 @@ export const useExpenseContext = () => {
   const context = useContext(ExpenseContext);
 
   if (!context) {
-    throw new Error(
-      'useExpenseContext must be used within an ExpenseProvider'
-    );
+    throw new Error('useExpenseContext must be used within an ExpenseProvider');
   }
 
   return context;
 };
-```
