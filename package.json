@@ -1,6 +1,7 @@
 {
   "name": "expense-tracker",
   "version": "0.1.0",
+  "homepage": "https://cibikarank2119.github.io/expense-tracker-mern",
   "private": true,
   "dependencies": {
     "@testing-library/dom": "^10.4.0",
