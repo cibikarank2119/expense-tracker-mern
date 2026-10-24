@@ -136,7 +136,7 @@ export const ExpenseProvider = ({ children, token, user }) => {
   const [state, dispatch] = useReducer(expenseReducer, initialState);
   const [storageLoaded, setStorageLoaded] = useState(false);
 
-  const userId = user?.id || user?._id;
+   const userId = user?.id || user?._id;
   const storageKey = userId
     ? `expenseTrackerData_${userId}`
     : null;
